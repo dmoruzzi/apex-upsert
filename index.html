@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dynamic Apex Data Type Selector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+          },
+          colors: {
+            primary: '#2563EB',
+            secondary: '#64748B',
+          },
+          backdropBlur: {
+            sm: '4px',
+          },
+        },
+      },
+    };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+</head>
+
+<body class="h-full bg-gradient-to-br from-gray-100 via-white to-gray-200 font-sans text-gray-800">
+  <main class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-5xl bg-white/60 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-gray-200 space-y-6">
+      <h1 class="text-3xl font-bold text-gray-900">Apex Data Type Mapper</h1>
+
+      <!-- Input Section -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <label for="sObjectInput" class="block text-sm font-semibold mb-1">sObject Record Name</label>
+          <input id="sObjectInput" type="text" class="input-style" placeholder="e.g. MyObject__c" value="MyObject__c" />
+        </div>
+
+        <div>
+          <label for="separatorSelect" class="block text-sm font-semibold mb-1">Separator</label>
+          <div class="flex items-center gap-2">
+            <select id="separatorSelect" class="input-style w-36" title="Choose a separator">
+              <option value=",">Comma (,)</option>
+              <option value="\\t">Tab</option>
+              <option value=";">Semicolon (;)</option>
+              <option value="|">Pipe (|)</option>
+              <option value="custom">Custom...</option>
+            </select>
+            <input id="customSeparatorInput" type="text" maxlength="4" class="input-style w-24 hidden"
+              placeholder="Custom" title="Enter custom separator" />
+          </div>
+          <p class="text-xs text-gray-500 mt-1">
+            Use comma or tab for most spreadsheet data.
+          </p>
+        </div>
+
+        <div>
+          <label for="uniqueIdInput" class="block text-sm font-semibold mb-1">Unique Identifier Column</label>
+          <input id="uniqueIdInput" type="text" class="input-style" placeholder="e.g. Name" value="Name" />
+        </div>
+      </div>
+
+      <!-- Textarea -->
+      <div>
+        <label for="dataInput" class="block text-sm font-semibold mb-1">Enter Tabular Data</label>
+        <textarea id="dataInput" rows="8"
+          class="input-style font-mono resize-none h-40 w-full placeholder:italic placeholder:text-sm"
+          placeholder="Paste your tabular data here"></textarea>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex items-center gap-4">
+        <button id="parseBtn"
+          class="btn-primary">Parse Headers</button>
+        <button id="resetBtn"
+          class="btn-secondary" type="button">Reset</button>
+      </div>
+
+      <!-- Error -->
+      <div id="inlineError" class="text-red-600 mt-2 hidden text-sm"></div>
+
+      <!-- Mapping UI -->
+      <div id="mappingContainer" class="mt-6"></div>
+    </div>
+  </main>
+
+  <!-- Spinner Overlay -->
+  <div id="spinnerOverlay"
+    class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+    <div class="flex flex-col items-center">
+      <svg class="animate-spin h-10 w-10 text-primary mb-2" xmlns="http://www.w3.org/2000/svg" fill="none"
+        viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor"
+          d="M4 12a8 8 0 018-8v8z"></path>
+      </svg>
+      <span class="text-white font-semibold">Generating scripts...</span>
+    </div>
+  </div>
+
+  <style>
+    .input-style {
+      @apply border border-gray-300 rounded-md px-3 py-2 w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition;
+    }
+
+    .btn-primary {
+      @apply bg-primary text-white px-4 py-2 rounded-md shadow hover:bg-blue-700 transition font-medium;
+    }
+
+    .btn-secondary {
+      @apply bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300 transition font-medium;
+    }
+
+    #mappingContainer select {
+      @apply mt-2 w-full border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary;
+    }
+
+    #mappingContainer .header-card {
+      @apply bg-white/80 border border-gray-200 rounded-lg p-4 shadow-md transition hover:shadow-lg min-w-[220px];
+    }
+  </style>
+
+  <!-- JS from your original code remains intact -->
+  <!-- Place your full original <script> tag here as-is -->
+
+</body>
+
+</html>
+<script>
+
+const apexDataTypes = [
+"String", "Boolean", "Integer", "Double", "Decimal", "Long",
+"Date", "Datetime", "ID", "Time", "Blob"
+];
+
+function inferApexDataType(values) {
+const isBoolean = v => /^(true|false)$/i.test(v);
+const isInteger = v => /^-?\d+$/.test(v);
+const isDecimal = v => /^-?\d*\.\d+$/.test(v);
+const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isDatetime = v => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/.test(v);
+const isID = v => /^[a-zA-Z0-9]{15,18}$/.test(v); // Salesforce ID
+
+let score = {
+Boolean: 0,
+Integer: 0,
+Decimal: 0,
+Date: 0,
+Datetime: 0,
+ID: 0,
+String: 0,
+};
+
+values.forEach(v => {
+if (isBoolean(v)) score.Boolean++;
+else if (isInteger(v)) score.Integer++;
+else if (isDecimal(v)) score.Decimal++;
+else if (isDate(v)) score.Date++;
+else if (isDatetime(v)) score.Datetime++;
+else if (isID(v)) score.ID++;
+else score.String++;
+});
+
+const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0][0];
+return best;
+}
+
+function decodeSeparator(sep) {
+if (sep === "\\t") return "\t";
+if (sep === "\\n") return "\n";
+if (sep === "\\r") return "\r";
+return sep;
+}
+
+let headerTypePairs = [];
+
+document.getElementById('parseBtn').addEventListener('click', () => {
+const data = document.getElementById('dataInput').value.trim();
+const separatorSelect = document.getElementById('separatorSelect');
+let sepRaw = separatorSelect.value;
+
+// If "custom" is selected, get from the input box
+if (sepRaw === 'custom') {
+const custom = document.getElementById('customSeparatorInput').value;
+if (!custom) {
+alert("Please enter a custom separator.");
+return;
+}
+sepRaw = custom;
+}
+const separator = decodeSeparator(sepRaw);
+const sObjectName = document.getElementById('sObjectInput').value.trim();
+const uniqueKey = document.getElementById('uniqueIdInput').value.trim();
+
+if (!data) {
+alert("Please enter some data first.");
+return;
+}
+
+// --- Robust CSV/TSV parsing with quoted fields ---
+function parseCSVLine(line, sep) {
+const result = [];
+let cur = '';
+let inQuotes = false;
+let i = 0;
+while (i < line.length) { const char=line[i]; if (char==='"' ) { if (inQuotes && line[i + 1]==='"' ) { cur +='"' ; i++;
+    } else { inQuotes=!inQuotes; } } else if (char===sep && !inQuotes) { result.push(cur); cur='' ; } else { cur +=char;
+    } i++; } result.push(cur); return result.map(s=> s.trim());
+    }
+
+    // Try to detect if the data is quoted CSV (all fields in first line are quoted and separated by commas)
+    function isAllFieldsQuotedCSV(lines) {
+    if (!lines.length) return false;
+    const firstLine = lines[0];
+    // If it starts and ends with a quote and has commas, and all fields are quoted
+    const fields = parseCSVLine(firstLine, ',');
+    return fields.length > 1 && fields.every(f => f.length === 0 || (f.startsWith('"') && f.endsWith('"')));
+    }
+
+    const lines = data.split(/\r?\n/);
+    let headers;
+    let dataRows;
+
+    // Support: quoted CSV (with comma), unquoted CSV, tab, etc.
+    if (
+    (separator === ',' && (
+    data.startsWith('"') ||
+    isAllFieldsQuotedCSV(lines)
+    ))
+    ) {
+    // Remove outer quotes for headers and data
+    headers = parseCSVLine(lines[0], ',').map(h => h.replace(/^"(.*)"$/, '$1'));
+    dataRows = lines.slice(1).map(line =>
+    parseCSVLine(line, ',').map(cell => cell.replace(/^"(.*)"$/, '$1'))
+    );
+    } else {
+    headers = lines[0].split(separator).map(h => h.trim());
+    dataRows = lines.slice(1).map(line => line.split(separator).map(v => v.trim()));
+    }
+
+    // Remove empty trailing rows
+    while (dataRows.length && dataRows[dataRows.length - 1].every(cell => cell === "")) {
+    dataRows.pop();
+    }
+
+    if (headers.length === 0) {
+    alert("No headers found in the first row.");
+    return;
+    }
+
+    const uniqueIndex = headers.indexOf(uniqueKey);
+    if (uniqueIndex === -1) {
+    alert(`Unique Identifier Column "${uniqueKey}" not found in headers.`);
+    return;
+    }
+
+    const container = document.getElementById('mappingContainer');
+    container.innerHTML = '';
+
+    const title = document.createElement('h2');
+    title.className = "text-xl font-semibold mb-4";
+    title.textContent = "Map Headers to Apex Data Types";
+    container.appendChild(title);
+
+    const scrollContainer = document.createElement('div');
+    scrollContainer.className = "flex flex-wrap gap-4 pb-4";
+
+    headerTypePairs = [];
+
+    headers.forEach((header, colIndex) => {
+    const sampleValues = dataRows.slice(0, 20).map(row => row[colIndex] || "").filter(Boolean);
+    const inferredType = inferApexDataType(sampleValues);
+
+    const card = document.createElement('div');
+    card.className = "min-w-[200px] flex flex-col border rounded p-3 bg-gray-50 shadow-sm";
+
+    const label = document.createElement('label');
+    label.className = "font-medium mb-2 text-sm";
+    label.textContent = header;
+
+    const select = document.createElement('select');
+    select.className = "border rounded p-1";
+    apexDataTypes.forEach(type => {
+    const option = document.createElement('option');
+    option.value = type;
+    option.textContent = type;
+    if (type === inferredType) option.selected = true;
+    select.appendChild(option);
+    });
+
+    card.appendChild(label);
+    card.appendChild(select);
+    scrollContainer.appendChild(card);
+
+    headerTypePairs.push({ header, select });
+    });
+
+    container.appendChild(scrollContainer);
+
+    // Create a "Generate Scripts" button
+    if (!document.getElementById('makeScriptsBtn')) {
+    const btn = document.createElement('button');
+    btn.id = 'makeScriptsBtn';
+    btn.textContent = 'Generate Apex Scripts';
+    let epoch = new Date().getTime();
+    btn.className = "mt-6 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition";
+    container.appendChild(btn);
+
+    btn.addEventListener('click', () => {
+    const headerTypeMap = {};
+    headerTypePairs.forEach(({ header, select }) => {
+    headerTypeMap[header] = select.value;
+    });
+
+    dataRows.forEach(row => {
+    const uniqueValue = row[uniqueIndex];
+    if (!uniqueValue) return;
+
+    let varLines = '';
+    headers.forEach((header, i) => {
+    const type = headerTypeMap[header];
+    const value = row[i];
+    if (!value) return;
+
+    let formatted = '';
+    if (type === 'String' || type === 'ID' || type === 'Blob') {
+    formatted = `'${value}'`;
+    } else if (type === 'Boolean') {
+    formatted = value.toLowerCase() === 'true' ? 'true' : 'false';
+    } else if (['Integer', 'Double', 'Decimal', 'Long'].includes(type)) {
+    formatted = value;
+    } else if (type === 'Date') {
+    formatted = `Date.valueOf('${value}')`;
+    } else if (type === 'Datetime') {
+    formatted = `Datetime.valueOf('${value}')`;
+    } else {
+    formatted = `'${value}'`;
+    }
+
+    varLines += `${type} ${header} = ${formatted};\n`;
+    });
+
+    const soqlFields = headers.join(', ');
+
+    const targetValueFormatted = headerTypeMap[uniqueKey] === 'String' || headerTypeMap[uniqueKey] === 'ID'
+    ? `'${uniqueValue}'` : uniqueValue;
+
+    const classCode = `
+${varLines}
+String targetName = ${targetValueFormatted};
+String transactionId = Nebula.Logger.getTransactionId();
+
+try {
+    Nebula.Logger.info('Upsert${sObjectName}')
+        .setMessage(new Nebula.LogMessage('Starting upsert for ${sObjectName} with unique field: {0}', targetName));
+
+    List<${sObjectName}> records = [
+        SELECT Id, ${soqlFields}
+        FROM ${sObjectName}
+        WHERE ${uniqueKey} = :targetName
+        LIMIT 1
+    ];
+
+    if (!records.isEmpty()) {
+        ${sObjectName} existingRecord = records[0];
+        ${headers.map(h => `existingRecord.${h} = ${h};`).join('\n        ')}
+        update existingRecord;
+        Nebula.Logger.info('Upsert${sObjectName}').setMessage('Updated record').setRecord(existingRecord);
+    } else {
+        ${sObjectName} newRecord = new ${sObjectName}(
+          ${headers.map(h => `${h} = ${h}`).join(',\n          ')}
+        );
+        insert newRecord;
+        Nebula.Logger.info('Upsert${sObjectName}').setMessage('Inserted new record').setRecord(newRecord);
+    }
+} catch (Exception ex) {
+    Nebula.Logger.error('Upsert${sObjectName}')
+        .addTag(targetName)
+        .setMessage(new Nebula.LogMessage('Exception: {0} - {1}', ex.getTypeName(), ex.getMessage()));
+} finally {
+    Nebula.Logger.saveLog(Nebula.Logger.SaveMethod.EVENT_BUS);
+}
+`.trim();
+
+        const blob = new Blob([classCode], { type: 'text/plain' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${epoch}-${uniqueValue}.cls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        });
+        });
+        }
+        });
+
+</script>
+</body>
+
+</html>
