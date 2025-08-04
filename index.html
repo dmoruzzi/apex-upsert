@@ -36,7 +36,7 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <label for="sObjectInput" class="block text-sm font-semibold mb-1">sObject Record Name</label>
-          <input id="sObjectInput" type="text" class="input-style" placeholder="e.g. MyObject__c" value="MyObject__c" />
+          <input id="sObjectInput" type="text" class="input-style" placeholder="e.g. MyObject__c" />
         </div>
 
         <div>
@@ -55,6 +55,12 @@
           <p class="text-xs text-gray-500 mt-1">
             Use comma or tab for most spreadsheet data.
           </p>
+
+          <!-- File Prefix Option (moved here) -->
+          <div class="flex items-center gap-2 mt-2">
+            <label for="filePrefixInput" class="block text-sm font-semibold mb-1">File Prefix</label>
+            <input id="filePrefixInput" type="text" class="input-style w-40" placeholder="Prefix for files" />
+          </div>
         </div>
 
         <div>
@@ -74,7 +80,7 @@
       <!-- Buttons -->
       <div class="flex items-center gap-4">
         <button id="parseBtn"
-          class="btn-primary">Parse Headers</button>
+          class="btn-primary">Parse</button>
         <button id="resetBtn"
           class="btn-secondary" type="button">Reset</button>
       </div>
@@ -121,15 +127,18 @@
     #mappingContainer .header-card {
       @apply bg-white/80 border border-gray-200 rounded-lg p-4 shadow-md transition hover:shadow-lg min-w-[220px];
     }
+
+    .input-disabled {
+      background-color: #e5e7eb !important; /* Tailwind gray-200 */
+      color: #9ca3af !important; /* Tailwind gray-400 */
+      cursor: not-allowed !important;
+      opacity: 0.7;
+    }
   </style>
 
   <!-- JS from your original code remains intact -->
   <!-- Place your full original <script> tag here as-is -->
-
-</body>
-
-</html>
-<script>
+  <script>
 
 const apexDataTypes = [
 "String", "Boolean", "Integer", "Double", "Decimal", "Long",
@@ -179,6 +188,8 @@ let headerTypePairs = [];
 
 document.getElementById('parseBtn').addEventListener('click', () => {
 const data = document.getElementById('dataInput').value.trim();
+const dataInput = document.getElementById('dataInput');
+dataInput.disabled = true; // Disable editing
 const separatorSelect = document.getElementById('separatorSelect');
 let sepRaw = separatorSelect.value;
 
@@ -192,7 +203,10 @@ return;
 sepRaw = custom;
 }
 const separator = decodeSeparator(sepRaw);
-const sObjectName = document.getElementById('sObjectInput').value.trim();
+const sObjectInput = document.getElementById('sObjectInput');
+const sObjectName = sObjectInput.value.trim();
+// Save sObjectInput to localStorage for persistence
+localStorage.setItem('lastSObjectInput', sObjectName);
 const uniqueKey = document.getElementById('uniqueIdInput').value.trim();
 
 if (!data) {
@@ -315,47 +329,55 @@ while (i < line.length) { const char=line[i]; if (char==='"' ) { if (inQuotes &&
     headerTypeMap[header] = select.value;
     });
 
-    dataRows.forEach(row => {
-    const uniqueValue = row[uniqueIndex];
-    if (!uniqueValue) return;
+    let combinedClassCode = ''; // Collect all into this
 
-    let varLines = '';
-    headers.forEach((header, i) => {
+    // Get file prefix from input
+    const filePrefixInput = document.getElementById('filePrefixInput');
+    let filePrefix = filePrefixInput && filePrefixInput.value.trim();
+
+dataRows.forEach(row => {
+  const uniqueValue = row[uniqueIndex];
+  if (!uniqueValue) return;
+
+  let varLines = '';
+  headers.forEach((header, i) => {
     const type = headerTypeMap[header];
     const value = row[i];
     if (!value) return;
 
     let formatted = '';
     if (type === 'String' || type === 'ID' || type === 'Blob') {
-    formatted = `'${value}'`;
+      formatted = `'${value}'`;
     } else if (type === 'Boolean') {
-    formatted = value.toLowerCase() === 'true' ? 'true' : 'false';
+      formatted = value.toLowerCase() === 'true' ? 'true' : 'false';
     } else if (['Integer', 'Double', 'Decimal', 'Long'].includes(type)) {
-    formatted = value;
+      formatted = value;
     } else if (type === 'Date') {
-    formatted = `Date.valueOf('${value}')`;
+      formatted = `Date.valueOf('${value}')`;
     } else if (type === 'Datetime') {
-    formatted = `Datetime.valueOf('${value}')`;
+      formatted = `Datetime.valueOf('${value}')`;
     } else {
-    formatted = `'${value}'`;
+      formatted = `'${value}'`;
     }
 
     varLines += `${type} ${header} = ${formatted};\n`;
-    });
+  });
 
-    const soqlFields = headers.join(', ');
-
-    const targetValueFormatted = headerTypeMap[uniqueKey] === 'String' || headerTypeMap[uniqueKey] === 'ID'
+  const soqlFields = headers.join(', ');
+  const targetValueFormatted = headerTypeMap[uniqueKey] === 'String' || headerTypeMap[uniqueKey] === 'ID'
     ? `'${uniqueValue}'` : uniqueValue;
 
-    const classCode = `
+  // --- Begin new code block for demo-style logging and structure ---
+  const classCode = `
 ${varLines}
 String targetName = ${targetValueFormatted};
 String transactionId = Nebula.Logger.getTransactionId();
 
 try {
     Nebula.Logger.info('Upsert${sObjectName}')
-        .setMessage(new Nebula.LogMessage('Starting upsert for ${sObjectName} with unique field: {0}', targetName));
+        .setMessage(
+            new Nebula.LogMessage('Starting upsert for ${sObjectName} with ${uniqueKey}: {0}', targetName)
+        );
 
     List<${sObjectName}> records = [
         SELECT Id, ${soqlFields}
@@ -364,31 +386,87 @@ try {
         LIMIT 1
     ];
 
+    Nebula.Logger.debug('Upsert${sObjectName}')
+        .addTag(targetName)
+        .setMessage(
+            new Nebula.LogMessage('Found {0} record(s) for ${uniqueKey} = {1}', records.size(), targetName)
+        );
+
     if (!records.isEmpty()) {
         ${sObjectName} existingRecord = records[0];
-        ${headers.map(h => `existingRecord.${h} = ${h};`).join('\n        ')}
+
+        Nebula.Logger.debug('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage('Found existing record')
+            .setRecord(existingRecord);
+
+${headers.filter(h => h !== uniqueKey).map(h => `        existingRecord.${h} = ${h};`).join('\n')}
+
+        Nebula.Logger.debug('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage('About to update record')
+            .setRecord(existingRecord);
+
         update existingRecord;
-        Nebula.Logger.info('Upsert${sObjectName}').setMessage('Updated record').setRecord(existingRecord);
+
+        Nebula.Logger.info('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage('Updated record')
+            .setRecord(existingRecord);
+
     } else {
+        Nebula.Logger.warn('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage(
+                new Nebula.LogMessage('No record found for ${uniqueKey} = {0}', targetName)
+            );
+
         ${sObjectName} newRecord = new ${sObjectName}(
-          ${headers.map(h => `${h} = ${h}`).join(',\n          ')}
+${headers.map(h => `            ${h} = ${h}`).join(',\n')}
         );
+
+        Nebula.Logger.debug('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage('About to insert new record')
+            .setRecord(newRecord);
+
         insert newRecord;
-        Nebula.Logger.info('Upsert${sObjectName}').setMessage('Inserted new record').setRecord(newRecord);
+
+        Nebula.Logger.info('Upsert${sObjectName}')
+            .addTag(targetName)
+            .setMessage('Inserted new record')
+            .setRecord(newRecord);
     }
+
+    Nebula.Logger.info('Upsert${sObjectName}')
+        .addTag(targetName)
+        .setMessage('Upsert operation completed.');
+
 } catch (Exception ex) {
     Nebula.Logger.error('Upsert${sObjectName}')
         .addTag(targetName)
-        .setMessage(new Nebula.LogMessage('Exception: {0} - {1}', ex.getTypeName(), ex.getMessage()));
+        .setMessage(
+            new Nebula.LogMessage(
+                'Upsert operation failed with exception: {0} - {1}',
+                ex.getTypeName(),
+                ex.getMessage()
+            )
+        );
 } finally {
     Nebula.Logger.saveLog(Nebula.Logger.SaveMethod.EVENT_BUS);
 }
 `.trim();
+    // --- End new code block ---
 
         const blob = new Blob([classCode], { type: 'text/plain' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `${epoch}-${uniqueValue}.cls`;
+        // Use filePrefix for filename, but if empty, don't prefix at all
+        let filename = uniqueValue + '.cls';
+        if (filePrefix) {
+          filename = `${filePrefix}-${uniqueValue}.cls`;
+        }
+        link.download = filename;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -396,6 +474,33 @@ try {
         });
         }
         });
+
+// Set filePrefixInput value to epoch and restore sObjectInput from localStorage on page load
+document.addEventListener('DOMContentLoaded', function() {
+  const filePrefixInput = document.getElementById('filePrefixInput');
+  if (filePrefixInput && !filePrefixInput.value) {
+    filePrefixInput.value = String(new Date().getTime());
+  }
+  // Restore sObjectInput from localStorage if available, else fallback to default
+  const sObjectInput = document.getElementById('sObjectInput');
+  const lastSObject = localStorage.getItem('lastSObjectInput');
+  sObjectInput.value = lastSObject ? lastSObject : 'MyObject__c';
+});
+
+// Add Reset button logic to re-enable data input and clear mapping UI
+document.getElementById('resetBtn').addEventListener('click', () => {
+  const dataInput = document.getElementById('dataInput');
+  dataInput.disabled = false; // Re-enable editing
+  dataInput.classList.remove('input-disabled');
+  document.getElementById('mappingContainer').innerHTML = ''; // Clear mapping UI
+  // Restore sObjectInput from localStorage if available, else fallback to default
+  const sObjectInput = document.getElementById('sObjectInput');
+  const lastSObject = localStorage.getItem('lastSObjectInput');
+  sObjectInput.value = lastSObject ? lastSObject : 'MyObject__c';
+  document.getElementById('uniqueIdInput').value = 'Name'; // Reset unique ID
+  document.getElementById('filePrefixInput').value = String(new Date().getTime()); // Reset file prefix to epoch
+  document.getElementById('dataInput').value = ''; // Clear data
+});
 
 </script>
 </body>
